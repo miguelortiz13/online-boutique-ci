@@ -1,0 +1,39 @@
+# ==============================================================================
+# Online Boutique - Trivy Vulnerability Exception Policy & Ignore List
+# ==============================================================================
+#
+# POLICY & GOVERNANCE:
+# 1. Zero Undocumented Waivers:
+#    Any CVE added to this file must contain an accompanying comment block
+#    stating the exact reason for the waiver, impact analysis, ticket ID,
+#    and expiration date.
+#
+# 2. Required Fields per Exception:
+#    # CVE-YYYY-XXXXX
+#    # - Reason: [Detailed technical justification why the vulnerability is not exploitable]
+#    # - Context: [Service(s) affected, runtime environment, network reachability]
+#    # - Ticket: [Azure DevOps Work Item / GitHub Issue reference]
+#    # - Expiration: [YYYY-MM-DD - maximum waiver validity 90 days]
+#    # - ApprovedBy: [Name / Role]
+#
+# 3. Patch Availability:
+#    Vulnerabilities with an available upstream fix SHOULD NOT be ignored.
+#    Prioritize upgrading the base image or updating application dependencies.
+#    Use --ignore-unfixed for flaws where no remediation currently exists.
+#
+# 4. Expiration Lifecycle:
+#    Expired exceptions will be purged during regular sprint security reviews.
+#
+# ==============================================================================
+# ACTIVE EXCEPTIONS:
+# (Currently empty - All base images and dependencies are free of CRITICAL CVEs)
+# ==============================================================================
+#
+# Example Template:
+# # CVE-2026-99999
+# # - Reason: Flaw in glibc regex parser, not reachable in pure-Go static binary
+# # - Context: frontend service distroless container
+# # - Ticket: #27
+# # - Expiration: 2026-12-31
+# # - ApprovedBy: SecOps Lead
+# CVE-2026-99999
