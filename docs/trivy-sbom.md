@@ -32,8 +32,8 @@ flowchart LR
 | Herramienta | Versión | Rol | Formato de Salida | Criterio de Bloqueo |
 | :--- | :--- | :--- | :--- | :--- |
 | **Syft** (`anchore/sbom-action`) | `v0.24.2` | Generación de SBOM | SPDX 2.3 JSON (`.spdx.json`) | Informativo / Auditoría |
-| **Trivy (SARIF)** (`aquasecurity/trivy-action`) | `0.36.0` | Ingesta en GitHub Security | SARIF 2.1.0 (`.sarif`) | No bloqueante (`exit-code: 0`), sube siempre |
-| **Trivy (Gate)** (`aquasecurity/trivy-action`) | `0.36.0` | Puerta de calidad en CI | Salida tabular en consola | Falla (`exit-code: 1`) si existen CVEs `CRITICAL` con parche |
+| **Trivy (SARIF)** (`aquasecurity/trivy-action`) | `v0.36.0` | Ingesta en GitHub Security | SARIF 2.1.0 (`.sarif`) | No bloqueante (`exit-code: 0`), sube siempre |
+| **Trivy (Gate)** (`aquasecurity/trivy-action`) | `v0.36.0` | Puerta de calidad en CI | Salida tabular en consola | Falla (`exit-code: 1`) si existen CVEs `CRITICAL` con parche |
 
 ---
 
@@ -76,7 +76,7 @@ El escaneo de vulnerabilidades se ejecuta en dos pasos complementarios:
 ### 1. Ingesta SARIF en GitHub Code Scanning:
 ```yaml
 - name: Run Trivy Vulnerability Scanner (SARIF)
-  uses: aquasecurity/trivy-action@0.36.0
+  uses: aquasecurity/trivy-action@v0.36.0
   with:
     image-ref: ${{ matrix.service }}:${{ github.sha }}
     scan-type: 'image'
@@ -98,7 +98,7 @@ El escaneo de vulnerabilidades se ejecuta en dos pasos complementarios:
 ### 2. Quality Gate con Fallo Inmediato:
 ```yaml
 - name: Run Trivy Vulnerability Scanner (Quality Gate)
-  uses: aquasecurity/trivy-action@0.36.0
+  uses: aquasecurity/trivy-action@v0.36.0
   with:
     image-ref: ${{ matrix.service }}:${{ github.sha }}
     scan-type: 'image'
