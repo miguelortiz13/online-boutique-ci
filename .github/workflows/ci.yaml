@@ -1,0 +1,159 @@
+name: CI - Build Microservices
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/ci.yaml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/ci.yaml'
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Single service to build (e.g. frontend, cartservice) or leave blank for changed'
+        required: false
+        type: string
+        default: ''
+      build_all:
+        description: 'Force build of all microservices'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.set-services.outputs.services }}
+      has_changes: ${{ steps.set-services.outputs.has_changes }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect Changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            adservice:
+              - 'src/adservice/**'
+            cartservice:
+              - 'src/cartservice/**'
+            checkoutservice:
+              - 'src/checkoutservice/**'
+            currencyservice:
+              - 'src/currencyservice/**'
+            emailservice:
+              - 'src/emailservice/**'
+            frontend:
+              - 'src/frontend/**'
+            loadgenerator:
+              - 'src/loadgenerator/**'
+            paymentservice:
+              - 'src/paymentservice/**'
+            productcatalogservice:
+              - 'src/productcatalogservice/**'
+            recommendationservice:
+              - 'src/recommendationservice/**'
+            shippingservice:
+              - 'src/shippingservice/**'
+            shoppingassistantservice:
+              - 'src/shoppingassistantservice/**'
+
+      - name: Determine Services to Build
+        id: set-services
+        run: |
+          ALL_SERVICES='["adservice","cartservice","checkoutservice","currencyservice","emailservice","frontend","loadgenerator","paymentservice","productcatalogservice","recommendationservice","shippingservice","shoppingassistantservice"]'
+
+          # 1. Manual single service input
+          if [ -n "${{ github.event.inputs.service }}" ]; then
+            echo "Building explicitly requested service: ${{ github.event.inputs.service }}"
+            SERVICES="[\"${{ github.event.inputs.service }}\"]"
+          # 2. Manual build_all input
+          elif [ "${{ github.event.inputs.build_all }}" = "true" ]; then
+            echo "Building all services via manual trigger"
+            SERVICES="$ALL_SERVICES"
+          # 3. Changes detected via paths-filter
+          else
+            DETECTED='${{ steps.filter.outputs.changes }}'
+            if [ -z "$DETECTED" ] || [ "$DETECTED" = "[]" ]; then
+              if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.event_name }}" = "push" ]; then
+                echo "No service files changed directly; defaulting to frontend for pipeline verification"
+                SERVICES='["frontend"]'
+              else
+                SERVICES='[]'
+              fi
+            else
+              echo "Detected changes in: $DETECTED"
+              SERVICES="$DETECTED"
+            fi
+          fi
+
+          echo "Final services list: $SERVICES"
+          echo "services=$SERVICES" >> "$GITHUB_OUTPUT"
+
+          if [ "$SERVICES" = "[]" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build (${{ matrix.service }})
+    needs: changes
+    if: needs.changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Resolve Context & Dockerfile
+        id: paths
+        run: |
+          SERVICE="${{ matrix.service }}"
+          if [ "$SERVICE" = "cartservice" ]; then
+            echo "context=./src/cartservice/src" >> "$GITHUB_OUTPUT"
+            echo "file=./src/cartservice/src/Dockerfile" >> "$GITHUB_OUTPUT"
+          else
+            echo "context=./src/${SERVICE}" >> "$GITHUB_OUTPUT"
+            echo "file=./src/${SERVICE}/Dockerfile" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Building service: $SERVICE"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Container Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.paths.outputs.context }}
+          file: ${{ steps.paths.outputs.file }}
+          push: false
+          load: true
+          tags: ${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Verify Built Image
+        run: |
+          docker images "${{ matrix.service }}:${{ github.sha }}"
