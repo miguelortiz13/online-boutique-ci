@@ -7,12 +7,14 @@ on:
     paths:
       - 'src/**'
       - '.github/workflows/ci.yaml'
+      - '.hadolint.yaml'
   push:
     branches:
       - main
     paths:
       - 'src/**'
       - '.github/workflows/ci.yaml'
+      - '.hadolint.yaml'
   workflow_dispatch:
     inputs:
       service:
@@ -111,9 +113,95 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
+  lint:
+    name: Lint Dockerfile (${{ matrix.service }})
+    needs: changes
+    if: needs.changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Resolve Dockerfile Path
+        id: paths
+        run: |
+          SERVICE="${{ matrix.service }}"
+          if [ "$SERVICE" = "cartservice" ]; then
+            echo "file=src/cartservice/src/Dockerfile" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=src/${SERVICE}/Dockerfile" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ steps.paths.outputs.file }}
+          config: .hadolint.yaml
+          failure-threshold: warning
+
+  test:
+    name: Unit Tests (${{ matrix.service }})
+    needs: changes
+    if: needs.changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Inspect Test Framework
+        id: svc
+        run: |
+          SERVICE="${{ matrix.service }}"
+          if [ "$SERVICE" = "cartservice" ]; then
+            echo "type=dotnet" >> "$GITHUB_OUTPUT"
+            echo "dir=src/cartservice" >> "$GITHUB_OUTPUT"
+          elif [ -f "src/${SERVICE}/go.mod" ]; then
+            echo "type=go" >> "$GITHUB_OUTPUT"
+            echo "dir=src/${SERVICE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=none" >> "$GITHUB_OUTPUT"
+            echo "dir=src/${SERVICE}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Go
+        if: steps.svc.outputs.type == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Set up .NET
+        if: steps.svc.outputs.type == 'dotnet'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0'
+
+      - name: Run Unit Tests
+        run: |
+          TYPE="${{ steps.svc.outputs.type }}"
+          DIR="${{ steps.svc.outputs.dir }}"
+          if [ "$TYPE" = "go" ]; then
+            echo "Running Go unit tests in $DIR..."
+            cd "$DIR"
+            go test -v ./...
+          elif [ "$TYPE" = "dotnet" ]; then
+            echo "Running .NET unit tests in $DIR..."
+            dotnet test src/cartservice/tests/
+          else
+            echo "No automated unit tests configured for ${{ matrix.service }} (skipping)"
+          fi
+
   build:
     name: Build (${{ matrix.service }})
-    needs: changes
+    needs: [changes, lint, test]
     if: needs.changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     strategy:
