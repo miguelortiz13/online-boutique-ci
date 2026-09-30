@@ -35,6 +35,7 @@ permissions:
   pull-requests: read
   security-events: write
   actions: read
+  id-token: write
 
 jobs:
   changes:
@@ -292,3 +293,89 @@ jobs:
           severity: 'CRITICAL'
           ignore-unfixed: true
           trivyignores: '.trivyignore'
+
+      - name: Set up Cosign
+        uses: sigstore/cosign-installer@v3.8.2
+
+      - name: Log in to Azure via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: |
+          az acr login --name ${{ vars.ACR_NAME }}
+
+      - name: Tag and Push Image to ACR
+        id: push-image
+        run: |
+          ACR_REGISTRY="${{ vars.ACR_NAME }}.azurecr.io"
+          SERVICE="${{ matrix.service }}"
+          IMAGE_NAME="${ACR_REGISTRY}/${SERVICE}"
+          SHORT_SHA="$(echo "${{ github.sha }}" | cut -c1-7)"
+
+          echo "Tagging image: ${IMAGE_NAME}:sha-${SHORT_SHA}"
+          docker tag "${SERVICE}:${{ github.sha }}" "${IMAGE_NAME}:sha-${SHORT_SHA}"
+
+          echo "Pushing primary tag: ${IMAGE_NAME}:sha-${SHORT_SHA}"
+          docker push "${IMAGE_NAME}:sha-${SHORT_SHA}"
+
+          # Tag and push 'latest' if on main branch
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "Pushing 'latest' tag for main branch..."
+            docker tag "${SERVICE}:${{ github.sha }}" "${IMAGE_NAME}:latest"
+            docker push "${IMAGE_NAME}:latest"
+          fi
+
+          # Tag and push semantic version if release tag
+          if [[ "${{ github.ref }}" =~ ^refs/tags/v ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            echo "Pushing release tag '${RELEASE_TAG}'..."
+            docker tag "${SERVICE}:${{ github.sha }}" "${IMAGE_NAME}:${RELEASE_TAG}"
+            docker push "${IMAGE_NAME}:${RELEASE_TAG}"
+          fi
+
+          # Resolve immutable repo digest
+          REPO_DIGEST="$(docker inspect --format='{{range .RepoDigests}}{{.}}{{"\n"}}{{end}}' "${IMAGE_NAME}:sha-${SHORT_SHA}" | grep "^${IMAGE_NAME}@" | head -n1)"
+          if [ -z "$REPO_DIGEST" ]; then
+            RAW_DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE_NAME}:sha-${SHORT_SHA}" | cut -d'@' -f2)"
+            REPO_DIGEST="${IMAGE_NAME}@${RAW_DIGEST}"
+          fi
+
+          echo "Pushed image digest: ${REPO_DIGEST}"
+          echo "image_digest=${REPO_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign Image with Cosign (Keyless)
+        env:
+          IMAGE_DIGEST: ${{ steps.push-image.outputs.image_digest }}
+        run: |
+          echo "Signing image digest with Cosign (Keyless via Sigstore): ${IMAGE_DIGEST}"
+          cosign sign --yes "${IMAGE_DIGEST}"
+
+      - name: Attest SBOM with Cosign
+        env:
+          IMAGE_DIGEST: ${{ steps.push-image.outputs.image_digest }}
+        run: |
+          SBOM_FILE="sbom-${{ matrix.service }}.spdx.json"
+          echo "Attesting SBOM (${SBOM_FILE}) to ${IMAGE_DIGEST}..."
+          cosign attest --yes --predicate "${SBOM_FILE}" --type spdx "${IMAGE_DIGEST}"
+
+      - name: Verify Image Signature and Attestation
+        env:
+          IMAGE_DIGEST: ${{ steps.push-image.outputs.image_digest }}
+        run: |
+          echo "Verifying signature of ${IMAGE_DIGEST}..."
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/miguelortiz13/online-boutique-ci/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE_DIGEST}"
+
+          echo "Verifying SBOM attestation of ${IMAGE_DIGEST}..."
+          cosign verify-attestation \
+            --type spdx \
+            --certificate-identity-regexp "https://github.com/miguelortiz13/online-boutique-ci/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE_DIGEST}"
