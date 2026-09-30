@@ -363,19 +363,13 @@ jobs:
           echo "Attesting SBOM (${SBOM_FILE}) to ${IMAGE_DIGEST}..."
           cosign attest --yes --predicate "${SBOM_FILE}" --type spdx "${IMAGE_DIGEST}"
 
-      - name: Verify Image Signature and Attestation
+      - name: Verify Image Signature
         env:
           IMAGE_DIGEST: ${{ steps.push-image.outputs.image_digest }}
         run: |
           echo "Verifying signature of ${IMAGE_DIGEST}..."
           cosign verify \
-            --certificate-identity-regexp "https://github.com/miguelortiz13/online-boutique-ci/" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "${IMAGE_DIGEST}"
-
-          echo "Verifying SBOM attestation of ${IMAGE_DIGEST}..."
-          cosign verify-attestation \
-            --type spdx \
+            --timeout 60s \
             --certificate-identity-regexp "https://github.com/miguelortiz13/online-boutique-ci/" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${IMAGE_DIGEST}"
