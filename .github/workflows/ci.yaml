@@ -373,3 +373,94 @@ jobs:
             --certificate-identity-regexp "https://github.com/miguelortiz13/online-boutique-ci/" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${IMAGE_DIGEST}"
+
+      - name: Set up Kustomize
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        run: |
+          if ! command -v kustomize &> /dev/null; then
+            echo "Installing kustomize..."
+            curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+            sudo mv kustomize /usr/local/bin/
+          fi
+          kustomize version
+
+      - name: Promote to GitOps (platform-gitops)
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITOPS_PROMOTION_TOKEN }}
+          SERVICE: ${{ matrix.service }}
+          IMAGE_TAG: ${{ steps.push-image.outputs.image_tag }}
+          IMAGE_DIGEST: ${{ steps.push-image.outputs.image_digest }}
+          ACR_NAME: ${{ vars.ACR_NAME }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::GITOPS_PROMOTION_TOKEN not configured; skipping GitOps promotion."
+            exit 0
+          fi
+
+          echo "Configuring git author identity..."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          GITOPS_REPO="miguelortiz13/platform-gitops"
+          TEMP_DIR="$(mktemp -d)"
+
+          echo "Cloning ${GITOPS_REPO} into ${TEMP_DIR}..."
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITOPS_REPO}.git" "${TEMP_DIR}"
+          cd "${TEMP_DIR}/apps/online-boutique/overlays/dev"
+
+          ACR_REGISTRY="${ACR_NAME}.azurecr.io"
+          TARGET_IMAGE="${ACR_REGISTRY}/${SERVICE}:${IMAGE_TAG}"
+
+          echo "Updating overlay/dev image for ${SERVICE} to ${TARGET_IMAGE}..."
+          kustomize edit set image "${ACR_REGISTRY}/${SERVICE}=${TARGET_IMAGE}"
+
+          if git diff --quiet kustomization.yaml; then
+            echo "No image changes detected in dev overlay. Exiting cleanly."
+            exit 0
+          fi
+
+          BRANCH="promote/${SERVICE}-${IMAGE_TAG}"
+          echo "Switching to branch ${BRANCH}..."
+          git checkout -b "${BRANCH}"
+          git add kustomization.yaml
+          git commit -m "chore(gitops): promote ${SERVICE} to ${IMAGE_TAG} [skip ci]"
+
+          echo "Pushing branch ${BRANCH} to origin..."
+          git push -u origin "${BRANCH}" --force
+
+          echo "Checking for existing pull requests..."
+          EXISTING_PR=$(gh pr list --repo "${GITOPS_REPO}" --head "${BRANCH}" --json number -q '.[0].number')
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Pull request already exists: #${EXISTING_PR}"
+          else
+            echo "Creating Pull Request on ${GITOPS_REPO}..."
+            echo "Creating Pull Request body..."
+            {
+              echo "### 🚀 Automated GitOps Image Promotion"
+              echo ""
+              echo "- **Service:** \`${SERVICE}\`"
+              echo "- **New Image Tag:** \`${IMAGE_TAG}\`"
+              echo "- **Image Digest:** \`${IMAGE_DIGEST}\`"
+              echo "- **Source Repository:** \`${{ github.repository }}\`"
+              echo "- **Triggered By Commit:** \`${{ github.sha }}\`"
+              echo "- **Workflow Run:** [Run #${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+              echo "- **Target Environment:** \`dev\` (\`apps/online-boutique/overlays/dev\`)"
+              echo "- **Supply Chain Security:**"
+              echo "  - ✅ SBOM generated with Syft (SPDX JSON 2.3)"
+              echo "  - ✅ Trivy SARIF Vulnerability Scan passed Quality Gate"
+              echo "  - ✅ Cosign signature verified (Keyless via Sigstore & GitHub OIDC)"
+              echo "  - ✅ SBOM attestation attached to image digest in ACR"
+              echo ""
+              echo "---"
+              echo "*Generated automatically by CI pipeline in \`${{ github.repository }}\`.*"
+            } > /tmp/pr-body.md
+            PR_URL=$(gh pr create \
+              --repo "${GITOPS_REPO}" \
+              --base main \
+              --head "${BRANCH}" \
+              --title "chore(gitops): promote ${SERVICE} to ${IMAGE_TAG}" \
+              --body-file /tmp/pr-body.md)
+            echo "Pull Request successfully created: ${PR_URL}"
+          fi
