@@ -22,18 +22,18 @@ sequenceDiagram
     autonumber
     participant Dev as Desarrollador
     participant CI as GitHub Actions (online-boutique-ci)
-    participant ACR as Azure Container Registry
+    participant GHCR as GitHub Container Registry
     participant Sig as Sigstore / Cosign
     participant GitOps as GitHub (platform-gitops)
     participant Argo as Argo CD / K8s Cluster (P3)
 
     Dev->>CI: Git Push a rama main
     CI->>CI: Lint (Hadolint) + Tests (Go/.NET)
-    CI->>ACR: Buildx + Push Imagen (sha-<short>)
+    CI->>GHCR: Buildx + Push Imagen (sha-<short>)
     CI->>Sig: Firma Keyless + Atestación SBOM
     Note over CI,GitOps: Inicio del paso de Promoción GitOps (P2-06)
     CI->>GitOps: Clona repo platform-gitops
-    CI->>GitOps: kustomize edit set image acr.../servicio:sha-<short>
+    CI->>GitOps: kustomize edit set image ghcr.io/.../servicio:sha-<short>
     CI->>GitOps: Crea rama promote/<servicio>-<tag> y commit
     CI->>GitOps: Abre Pull Request contra main con metadata completa
     Note over GitOps,Argo: En P3: Aprobación / Merge y Reconciliación
@@ -73,8 +73,8 @@ resources:
   - ../../base
 
 images:
-  - name: acrdevsrelab01.azurecr.io/frontend
-    newName: acrdevsrelab01.azurecr.io/frontend
+  - name: ghcr.io/miguelortiz13/online-boutique/frontend
+    newName: ghcr.io/miguelortiz13/online-boutique/frontend
     newTag: sha-10599a0
 ```
 
@@ -102,7 +102,6 @@ En `.github/workflows/ci.yaml`, tras completar la firma y verificación criptogr
     SERVICE: ${{ matrix.service }}
     IMAGE_TAG: ${{ steps.push-image.outputs.image_tag }}
     IMAGE_DIGEST: ${{ steps.push-image.outputs.image_digest }}
-    ACR_NAME: ${{ vars.ACR_NAME }}
   run: |
     if [ -z "$GH_TOKEN" ]; then
       echo "::warning::GITOPS_PROMOTION_TOKEN no configurado; omitiendo promoción GitOps."
@@ -120,11 +119,11 @@ En `.github/workflows/ci.yaml`, tras completar la firma y verificación criptogr
     git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITOPS_REPO}.git" "${TEMP_DIR}"
     cd "${TEMP_DIR}/apps/online-boutique/overlays/dev"
 
-    ACR_REGISTRY="${ACR_NAME}.azurecr.io"
-    TARGET_IMAGE="${ACR_REGISTRY}/${SERVICE}:${IMAGE_TAG}"
+    # REGISTRY se define a nivel de workflow: ghcr.io/<owner>/online-boutique
+    TARGET_IMAGE="${REGISTRY}/${SERVICE}:${IMAGE_TAG}"
 
     echo "Actualizando kustomization para ${SERVICE} a ${TARGET_IMAGE}..."
-    kustomize edit set image "${ACR_REGISTRY}/${SERVICE}=${TARGET_IMAGE}"
+    kustomize edit set image "${REGISTRY}/${SERVICE}=${TARGET_IMAGE}"
 
     if git diff --quiet kustomization.yaml; then
       echo "No hay cambios en kustomization.yaml para dev. Saliendo sin cambios."
