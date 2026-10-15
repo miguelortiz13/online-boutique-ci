@@ -4,10 +4,10 @@
 [![Trivy Vulnerability Scanner](https://img.shields.io/badge/Security-Trivy%20SARIF-blue?logo=aquasecurity)](https://github.com/miguelortiz13/online-boutique-ci/security/code-scanning)
 [![Sigstore Cosign](https://img.shields.io/badge/Signed%20with-Cosign%20Keyless-blueviolet?logo=sigstore)](https://www.sigstore.dev/)
 [![SBOM SPDX 2.3](https://img.shields.io/badge/SBOM-Syft%20SPDX%202.3-informational?logo=anchore)](https://github.com/anchore/syft)
-[![Azure Container Registry](https://img.shields.io/badge/Registry-Azure%20ACR%20OIDC-0078D4?logo=microsoftazure)](https://azure.microsoft.com/services/container-registry/)
+[![GitHub Container Registry](https://img.shields.io/badge/Registry-GHCR-2088FF?logo=github)](https://github.com/miguelortiz13?tab=packages&repo_name=online-boutique-ci)
 [![GitOps Kustomize](https://img.shields.io/badge/GitOps-Kustomize%20v5-326CE5?logo=kubernetes)](https://github.com/miguelortiz13/platform-gitops)
 
-Repositorio oficial del **Proyecto 2 (`online-boutique-ci`)** dentro del **Laboratorio Integral de DevOps & SRE**. Implementa un pipeline de Integración Continua (CI) empresarial para la arquitectura de microservicios de **Google Online Boutique**, incorporando filtrado diferencial de rutas, control de calidad shift-left, escaneo avanzado de vulnerabilidades, inventario SBOM, autenticación sin secretos vía OIDC hacia Azure, firma criptográfica *keyless* y promoción automatizada hacia el repositorio GitOps.
+Repositorio oficial del **Proyecto 2 (`online-boutique-ci`)** dentro del **Laboratorio Integral de DevOps & SRE**. Implementa un pipeline de Integración Continua (CI) empresarial para la arquitectura de microservicios de **Google Online Boutique**, incorporando filtrado diferencial de rutas, control de calidad shift-left, escaneo avanzado de vulnerabilidades, inventario SBOM, publicación en GitHub Container Registry sin secretos estáticos, firma criptográfica *keyless* y promoción automatizada hacia el repositorio GitOps.
 
 ---
 
@@ -37,9 +37,9 @@ flowchart TD
         TrivySarif --> TrivyGate["Trivy Quality Gate<br/>(Bloqueo ante CRITICAL no mitigadas)"]
     end
 
-    subgraph Phase4 ["🔐 4. Publicación en ACR y Firma Criptográfica"]
-        TrivyGate --> AzureOIDC["Autenticación Azure OIDC<br/>(Secretless via Microsoft Entra ID)"]
-        AzureOIDC --> ACRPush["Push de Imagen a ACR<br/>(Etiqueta inmutable: sha-short)"]
+    subgraph Phase4 ["🔐 4. Publicación en GHCR y Firma Criptográfica"]
+        TrivyGate --> GhcrLogin["Login en GHCR<br/>(GITHUB_TOKEN efímero, packages: write)"]
+        GhcrLogin --> ACRPush["Push de Imagen a GHCR<br/>(Etiqueta inmutable: sha-short)"]
         ACRPush --> CosignSign["Firma Keyless con Cosign<br/>(Certificado Fulcio + Rekor Log)"]
         CosignSign --> CosignAttest["Atestación in-toto del SBOM<br/>(cosign attest --predicate)"]
         CosignAttest --> CosignVerify["Verificación de Firma en Pipeline<br/>(Validación de Identidad OIDC)"]
@@ -76,8 +76,8 @@ flowchart TD
 | **Build & Cache** | Docker Buildx + GHA Cache | Construcción de imágenes multi-etapa y cacheo | Cache remoto tipo `gha` con `mode=max` delimitado por microservicio |
 | **SBOM** | Anchore Syft v0.24.2 | Software Bill of Materials (inventario de componentes) | Estándar internacional **SPDX 2.3 JSON** |
 | **Vulnerabilidades** | Aqua Security Trivy | Detección de CVEs en dependencias y base OS | Exportación SARIF a pestaña Security + Quality Gate CRITICAL |
-| **Autenticación** | GitHub Actions OIDC | Conexión sin secretos hacia Microsoft Azure | Credenciales federadas de Entra ID, rol `AcrPush` / `Reader` PoLP |
-| **Registro** | Azure Container Registry | Almacenamiento seguro de imágenes y atestaciones | SKU `Basic` (`acrdevsrelab01`), nombres inmutables `sha-<corto>` |
+| **Autenticación** | `GITHUB_TOKEN` + OIDC | Push sin secretos estáticos; OIDC solo para la firma keyless | Permisos mínimos: `packages: write`, `id-token: write` |
+| **Registro** | GitHub Container Registry | Almacenamiento de imágenes, firmas y atestaciones | `ghcr.io/miguelortiz13/online-boutique/<servicio>`, nombres inmutables `sha-<corto>` |
 | **Firma Digital** | Sigstore Cosign v3.8.2 | Firma criptográfica e integridad de cadena de suministro | Modelo **Keyless** con Fulcio CA y Rekor Transparency Log |
 | **Promoción** | Kustomize v5 + GitHub CLI | Desacoplamiento de CI y CD mediante PR automatizado | Modificación declarativa en repo GitOps [`platform-gitops`](https://github.com/miguelortiz13/platform-gitops) |
 
@@ -93,7 +93,7 @@ Cada funcionalidad del pipeline ha sido rigurosamente implementada a través de 
 | **P2-02 (#25)** | Paths-Filter y Cache GitHub Actions | [#1](https://github.com/miguelortiz13/online-boutique-ci/pull/1), [#2](https://github.com/miguelortiz13/online-boutique-ci/pull/2) | [Run #36592230156](https://github.com/miguelortiz13/online-boutique-ci/actions/runs/36592230156) | Reducción de tiempo de build de 3m 15s a 52s con cache caliente. |
 | **P2-03 (#26)** | Hadolint Linter y Tests Go/.NET | [#3](https://github.com/miguelortiz13/online-boutique-ci/pull/3), [#4](https://github.com/miguelortiz13/online-boutique-ci/pull/4) | [Run #36593450912](https://github.com/miguelortiz13/online-boutique-ci/actions/runs/36593450912) | Bloqueo intencional en PR #4 por violación `DL3007` (tag latest) verificado. |
 | **P2-04 (#27)** | Trivy SARIF Scanner, SBOM Syft y Gate | [#5](https://github.com/miguelortiz13/online-boutique-ci/pull/5) | [Run #36594892100](https://github.com/miguelortiz13/online-boutique-ci/actions/runs/36594892100) | 16 hallazgos SARIF cargados en GitHub Security Tab; SBOM SPDX generado. |
-| **P2-05 (#28)** | ACR Secretless vía OIDC y Firma Cosign | [#6](https://github.com/miguelortiz13/online-boutique-ci/pull/6) | [Run #36664474194](https://github.com/miguelortiz13/online-boutique-ci/actions/runs/36664474194) | Login OIDC exitoso; imagen firmada; verificación Cosign en CI y CLI local. |
+| **P2-05 (#28)** | ACR Secretless vía OIDC y Firma Cosign | [#6](https://github.com/miguelortiz13/online-boutique-ci/pull/6) | [Run #36664474194](https://github.com/miguelortiz13/online-boutique-ci/actions/runs/36664474194) | Login OIDC exitoso; imagen firmada; verificación Cosign en CI y CLI local. *(Registro migrado de ACR a GHCR en 2026-10.)* |
 | **P2-06 (#29)** | Promoción GitOps Automatizada a Repo CD | [#7](https://github.com/miguelortiz13/online-boutique-ci/pull/7) | [Run #36670306701](https://github.com/miguelortiz13/online-boutique-ci/actions/runs/36670306701) | Apertura de [PR #1 en platform-gitops](https://github.com/miguelortiz13/platform-gitops/pull/1) actualizando `dev` a `sha-d6d7fb8`. |
 | **P2-07 (#30)** | Documentación Integral y Cierre Épica | [#8](https://github.com/miguelortiz13/online-boutique-ci/pull/8) | En ejecución | Publicación de README integral y cierre de Épica #23. |
 
@@ -115,15 +115,14 @@ El pipeline utiliza el backend de almacenamiento en cache de GitHub Actions (`ty
 
 El pipeline implementa los pilares del estándar **SLSA (Supply-chain Levels for Software Artifacts)**:
 
-### 1. Autenticación Secretless con Microsoft Entra ID (OIDC)
-En lugar de almacenar credenciales de servicio estáticas (`CLIENT_SECRET`) con riesgo de filtración:
-* GitHub Actions solicita un token JWT con firma criptográfica a `https://token.actions.githubusercontent.com`.
-* Microsoft Entra ID valida las *Federated Identity Credentials* vinculadas a los *claims* del repositorio (`repo:miguelortiz13/online-boutique-ci:ref:refs/heads/main` y `pull_request`).
-* Azure otorga un token de corta vida (1 hora) con el rol estricto `AcrPush` y `Reader` sobre el registro `acrdevsrelab01`.
+### 1. Publicación sin Secretos Estáticos
+* El push a GHCR usa el `GITHUB_TOKEN` que GitHub emite para cada job y que caduca al terminar; no hay `CLIENT_SECRET` ni tokens personales guardados.
+* El workflow solo pide `packages: write` (publicar) e `id-token: write` (token OIDC para la firma keyless).
+* *Historial:* hasta 2026-10 las imágenes iban a Azure Container Registry con OIDC federado en Entra ID (rol `AcrPush`). Se cambió a GHCR para eliminar el costo fijo del registro (~USD 5/mes).
 
 ### 2. Generación y Atestación de SBOM (Software Bill of Materials)
 * Mediante **Syft**, se extrae el árbol completo de dependencias binarias, paquetes de sistema operativo y librerías en formato estándar **SPDX 2.3 JSON**.
-* El SBOM se adjunta a la imagen en el ACR como una atestación OCI *in-toto* usando:
+* El SBOM se adjunta a la imagen en GHCR como una atestación OCI *in-toto* usando:
   ```bash
   cosign attest --yes --predicate sbom-frontend.spdx.json --type spdx <IMAGE_DIGEST>
   ```
@@ -137,7 +136,7 @@ En lugar de almacenar credenciales de servicio estáticas (`CLIENT_SECRET`) con 
   cosign verify \
     --certificate-identity-regexp "https://github.com/miguelortiz13/online-boutique-ci/" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-    acrdevsrelab01.azurecr.io/frontend@sha256:<IMAGE_SHA256>
+    ghcr.io/miguelortiz13/online-boutique/frontend@sha256:<IMAGE_SHA256>
   ```
 
 ---
@@ -150,7 +149,7 @@ El pipeline respeta estrictamente el principio de separación de responsabilidad
 2. Al compilar y firmar una nueva versión en `main`, el pipeline clona de manera efímera el repositorio declarativo [`platform-gitops`](https://github.com/miguelortiz13/platform-gitops).
 3. Utilizando **Kustomize CLI**, actualiza la imagen en el overlay correspondiente:
    ```bash
-   kustomize edit set image acrdevsrelab01.azurecr.io/frontend=acrdevsrelab01.azurecr.io/frontend:sha-<commit>
+   kustomize edit set image ghcr.io/miguelortiz13/online-boutique/frontend=ghcr.io/miguelortiz13/online-boutique/frontend:sha-<commit>
    ```
 4. Se crea automáticamente una rama `promote/<servicio>-<tag>` y se emite un Pull Request hacia la rama `main` de `platform-gitops` con toda la metadata del artefacto.
 5. En el **Proyecto 3 (P3)**, el operador GitOps (Argo CD) sincronizará y reconciliará dicho cambio de forma continua y declarativa en el clúster AKS.
@@ -160,7 +159,7 @@ El pipeline respeta estrictamente el principio de separación de responsabilidad
 ## 💰 7. Eficiencia Operativa y FinOps
 
 * **Compute:** 100% ejecutado en runners efímeros de GitHub Actions (`ubuntu-latest`) incluidos en la cuota gratuita para proyectos públicos / open-source.
-* **Storage & Registro:** Azure Container Registry (ACR) aprovisionado en SKU `Basic` en la región `eastus2` con un costo fijo aproximado de **~$0.16 USD/día**.
+* **Storage & Registro:** GitHub Container Registry, **sin costo** para repositorios públicos (antes ACR Basic, ~USD 0.16/día).
 * **Zero Idle Waste:** Ningún clúster de Kubernetes, máquina virtual o recurso de cómputo permanente se mantiene encendido para el pipeline de CI.
 
 ---
@@ -181,5 +180,5 @@ Para consultar los manuales técnicos detallados, especificaciones de arquitectu
 * [📄 Filtros de Rutas y Matriz Dinámica (`docs/ci-matrix.md`)](docs/ci-matrix.md)
 * [📄 Shift-Left Linting y Pruebas Unitarias (`docs/lint-and-tests.md`)](docs/lint-and-tests.md)
 * [📄 Escaneo SARIF con Trivy y SBOM con Syft (`docs/trivy-sbom.md`)](docs/trivy-sbom.md)
-* [📄 Publicación en ACR vía OIDC y Firma con Cosign (`docs/acr-cosign.md`)](docs/acr-cosign.md)
+* [📄 Publicación en GHCR y Firma con Cosign (`docs/ghcr-cosign.md`)](docs/ghcr-cosign.md)
 * [📄 Promoción Automatizada GitOps con Kustomize (`docs/gitops-promotion.md`)](docs/gitops-promotion.md)

@@ -35,7 +35,14 @@ permissions:
   pull-requests: read
   security-events: write
   actions: read
+  # GHCR: publicar imágenes, firmas y atestaciones con el GITHUB_TOKEN
+  packages: write
+  # Cosign keyless (certificado de Fulcio a partir del token OIDC de GitHub)
   id-token: write
+
+env:
+  # Registro de imágenes: GitHub Container Registry (gratis para repos públicos)
+  REGISTRY: ghcr.io/${{ github.repository_owner }}/online-boutique
 
 jobs:
   changes:
@@ -244,6 +251,8 @@ jobs:
           push: false
           load: true
           tags: ${{ matrix.service }}:${{ github.sha }}
+          # Vincula el paquete de GHCR a este repositorio
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
@@ -297,23 +306,18 @@ jobs:
       - name: Set up Cosign
         uses: sigstore/cosign-installer@v3.8.2
 
-      - name: Log in to Azure via OIDC
-        uses: azure/login@v2
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to Azure Container Registry
-        run: |
-          az acr login --name ${{ vars.ACR_NAME }}
-
-      - name: Tag and Push Image to ACR
+      - name: Tag and Push Image to GHCR
         id: push-image
         run: |
-          ACR_REGISTRY="${{ vars.ACR_NAME }}.azurecr.io"
           SERVICE="${{ matrix.service }}"
-          IMAGE_NAME="${ACR_REGISTRY}/${SERVICE}"
+          IMAGE_NAME="${REGISTRY}/${SERVICE}"
           SHORT_SHA="$(echo "${{ github.sha }}" | cut -c1-7)"
 
           echo "Tagging image: ${IMAGE_NAME}:sha-${SHORT_SHA}"
@@ -391,7 +395,6 @@ jobs:
           SERVICE: ${{ matrix.service }}
           IMAGE_TAG: ${{ steps.push-image.outputs.image_tag }}
           IMAGE_DIGEST: ${{ steps.push-image.outputs.image_digest }}
-          ACR_NAME: ${{ vars.ACR_NAME }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::warning::GITOPS_PROMOTION_TOKEN not configured; skipping GitOps promotion."
@@ -409,11 +412,10 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITOPS_REPO}.git" "${TEMP_DIR}"
           cd "${TEMP_DIR}/apps/online-boutique/overlays/dev"
 
-          ACR_REGISTRY="${ACR_NAME}.azurecr.io"
-          TARGET_IMAGE="${ACR_REGISTRY}/${SERVICE}:${IMAGE_TAG}"
+          TARGET_IMAGE="${REGISTRY}/${SERVICE}:${IMAGE_TAG}"
 
           echo "Updating overlay/dev image for ${SERVICE} to ${TARGET_IMAGE}..."
-          kustomize edit set image "${ACR_REGISTRY}/${SERVICE}=${TARGET_IMAGE}"
+          kustomize edit set image "${REGISTRY}/${SERVICE}=${TARGET_IMAGE}"
 
           if git diff --quiet kustomization.yaml; then
             echo "No image changes detected in dev overlay. Exiting cleanly."
@@ -451,7 +453,7 @@ jobs:
               echo "  - ✅ SBOM generated with Syft (SPDX JSON 2.3)"
               echo "  - ✅ Trivy SARIF Vulnerability Scan passed Quality Gate"
               echo "  - ✅ Cosign signature verified (Keyless via Sigstore & GitHub OIDC)"
-              echo "  - ✅ SBOM attestation attached to image digest in ACR"
+              echo "  - ✅ SBOM attestation attached to image digest in GHCR"
               echo ""
               echo "---"
               echo "*Generated automatically by CI pipeline in \`${{ github.repository }}\`.*"
